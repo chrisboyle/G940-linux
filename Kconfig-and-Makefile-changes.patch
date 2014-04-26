@@ -1,0 +1,35 @@
+diff --git a/drivers/input/Kconfig b/drivers/input/Kconfig
+index c5992cd195a1..d94b135e9c91 100644
+--- a/drivers/input/Kconfig
++++ b/drivers/input/Kconfig
+@@ -51,6 +51,17 @@ config INPUT_FF_MEMLESS
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called ff-memless.
+ 
++config INPUT_FF_MEMLESS_NEXT
++	tristate "New version of support for memoryless force-feedback devices"
++	help
++	  Say Y here to enable a new version of support for memoryless force
++	  feedback devices.
++
++	  If unsure, say N.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called ff-memless-next.
++
+ config INPUT_POLLDEV
+ 	tristate "Polled input device skeleton"
+ 	help
+diff --git a/drivers/input/Makefile b/drivers/input/Makefile
+index 40de6a7be641..416ef42d29e8 100644
+--- a/drivers/input/Makefile
++++ b/drivers/input/Makefile
+@@ -9,6 +9,7 @@ obj-$(CONFIG_INPUT)		+= input-core.o
+ input-core-y := input.o input-compat.o input-mt.o ff-core.o
+ 
+ obj-$(CONFIG_INPUT_FF_MEMLESS)	+= ff-memless.o
++obj-$(CONFIG_INPUT_FF_MEMLESS_NEXT)	+= ff-memless-next.o
+ obj-$(CONFIG_INPUT_POLLDEV)	+= input-polldev.o
+ obj-$(CONFIG_INPUT_SPARSEKMAP)	+= sparse-keymap.o
+ obj-$(CONFIG_INPUT_MATRIXKMAP)	+= matrix-keymap.o
+
