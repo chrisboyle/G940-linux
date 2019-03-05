@@ -7,6 +7,7 @@
  *  Copyright (c) 2006-2007 Jiri Kosina
  *  Copyright (c) 2008 Jiri Slaby
  *  Copyright (c) 2010 Hendrik Iben
+ *  Copyright (c) 2019 Chris Boyle
  */
 
 /*
@@ -648,6 +649,101 @@ static int lg_wireless_mapping(struct hid_input *hi, struct hid_usage *usage,
 	return 1;
 }
 
+#define HID_SC_TRIM_AILERON (HID_UP_SIMULATION | 0xb1)
+#define HID_SC_TRIM_PITCH   (HID_UP_SIMULATION | 0xb9)
+#define HID_SC_THROTTLE     (HID_UP_SIMULATION | 0xbb)
+#define HID_VENDOR_USAGE_1  (HID_UP_MSVENDOR   | 0x01)
+
+#define map_abs(c) hid_map_usage(hi, usage, bit, max, EV_ABS, (c))
+#define map_key(c) hid_map_usage(hi, usage, bit, max, EV_KEY, (c))
+
+static int lg_g940_mapping(struct hid_input *hi, struct hid_field *field,
+			   struct hid_usage *usage, unsigned long **bit,
+			   int *max)
+{
+	static const u16 button_map[] = {
+		/* trigger, red FIRE button, S1-3 (top) */
+		BTN_TRIGGER, BTN_THUMB, BTN_BASE, BTN_BASE2, BTN_BASE3,
+		/* S4 (side), S5 (pinkie), press hat, trigger stage 2 */
+		BTN_THUMB2, BTN_PINKIE, BTN_TOP2, BTN_TOP,
+		/* T1-4 (on throttle handle) */
+		BTN_TRIGGER_HAPPY11, BTN_TRIGGER_HAPPY12,
+		BTN_TRIGGER_HAPPY13, BTN_TRIGGER_HAPPY14,
+		/* P1-8 (base of throttle, with LEDs) */
+		BTN_TRIGGER_HAPPY1, BTN_TRIGGER_HAPPY2, BTN_TRIGGER_HAPPY3,
+		BTN_TRIGGER_HAPPY4, BTN_TRIGGER_HAPPY5, BTN_TRIGGER_HAPPY6,
+		BTN_TRIGGER_HAPPY7, BTN_TRIGGER_HAPPY8
+	};
+
+	static const u16 vendor_1_map[] = {
+		BTN_TRIGGER_HAPPY9,  /* mode switch = 1    */
+		BTN_TRIGGER_HAPPY10, /* mode switch = 3    */
+		0, 0,                /* always 0?          */
+		0, 0,                /* pedals/throttle ok */
+		0, 0,                /* always 1?          */
+		BTN_DEAD,            /* hand sensor        */
+		0, 0                 /* always 0? / AC ok  */
+	};
+
+	switch (usage->hid) {
+	case HID_GD_X: case HID_GD_Y:
+		/* offset 0 is joystick motion; 96 is mini-stick/hat */
+		map_abs(((field->report_offset > 0) ? ABS_TILT_X : ABS_X)
+			+ usage->hid - HID_GD_X);
+		return 1;
+	case HID_GD_Z:  /* rudder pedals */
+		map_abs(ABS_RUDDER);
+		return 1;
+	case HID_GD_RX:  /* right toe brake */
+		map_abs(ABS_GAS);
+		return 1;
+	case HID_GD_RY:  /* left toe brake */
+		map_abs(ABS_BRAKE);
+		return 1;
+	case HID_GD_RZ:  /* TRIM3 (rudder trim) */
+		map_abs(ABS_RZ);
+		return 1;
+	case HID_GD_DIAL: /* index 0 is R2, 1 is R1 (front/right of throttle) */
+		map_abs(usage->usage_index ? ABS_WHEEL : ABS_MISC);
+		return 1;
+	case HID_GD_HATSWITCH: /* offset 20 on stick, 24 & 28 on throttle */
+		if (field->report_offset < 20 || field->report_offset > 28 ||
+		    field->report_offset % 4)
+			return 0;
+		usage->hat_min = field->logical_minimum;
+		usage->hat_max = field->logical_maximum;
+		map_abs(ABS_HAT0X + (field->report_offset - 20) / 2);
+		return 1;
+	case HID_SC_TRIM_AILERON:  /* TRIM1 (pitch trim!) */
+		map_abs(ABS_RX);
+		return 1;
+	case HID_SC_TRIM_PITCH:  /* TRIM2 (aileron trim!) */
+		map_abs(ABS_RY);
+		return 1;
+	case HID_SC_THROTTLE:  /* two halves; index 0 is right-hand */
+		map_abs(usage->usage_index ? ABS_Z : ABS_THROTTLE);
+		return 1;
+	default:
+		break;
+	}
+
+	if ((usage->hid & HID_USAGE_PAGE) == HID_UP_BUTTON &&
+	    usage->usage_index < ARRAY_SIZE(button_map) &&
+	    button_map[usage->usage_index] != 0) {
+		map_key(button_map[usage->usage_index]);
+		return 1;
+	}
+
+	if (usage->hid == HID_VENDOR_USAGE_1 &&
+	    usage->usage_index < ARRAY_SIZE(vendor_1_map) &&
+	    vendor_1_map[usage->usage_index] != 0) {
+		map_key(vendor_1_map[usage->usage_index]);
+		return 1;
+	}
+
+	return 0;
+}
+
 static int lg_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 		struct hid_field *field, struct hid_usage *usage,
 		unsigned long **bit, int *max)
@@ -676,6 +772,10 @@ static int lg_input_mapping(struct hid_device *hdev, struct hid_input *hi,
 		return 1;
 
 	if ((drv_data->quirks & LG_WIRELESS) && lg_wireless_mapping(hi, usage, bit, max))
+		return 1;
+
+	if (hdev->product == USB_DEVICE_ID_LOGITECH_FLIGHT_SYSTEM_G940 &&
+	    lg_g940_mapping(hi, field, usage, bit, max))
 		return 1;
 
 	if ((hid & HID_USAGE_PAGE) != HID_UP_BUTTON)
