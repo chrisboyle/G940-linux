@@ -870,6 +870,60 @@ static int lg_raw_event(struct hid_device *hdev, struct hid_report *report,
 	return 0;
 }
 
+#define g940_validate_leds() hid_validate_values(hdev, HID_FEATURE_REPORT, \
+		3, 0, 15)
+
+struct g940_led {
+	struct led_classdev cdev;
+	unsigned int index;
+};
+
+static int lg_g940_led_set(struct led_classdev *cdev, enum led_brightness value)
+{
+	struct g940_led *led = container_of(cdev, struct g940_led, cdev);
+	struct device *dev = cdev->dev->parent;
+	struct hid_device *hdev = to_hid_device(dev);
+	struct hid_report *report;
+
+	if (cdev->flags & LED_UNREGISTERING) {
+		/* hdev is invalid and the device will turn off LEDs anyway */
+		return -ENODEV;
+	}
+
+	report = g940_validate_leds();
+
+	if (!report) {
+		hid_err(hdev, "LED feature report invalid");
+		return -ENODEV;
+	}
+	report->field[0]->value[led->index] = value ? 1 : 0;
+	hid_hw_request(hdev, report, HID_REQ_SET_REPORT);
+	return 0;
+}
+
+static enum led_brightness lg_g940_led_get(struct led_classdev *cdev)
+{
+	struct g940_led *led = container_of(cdev, struct g940_led, cdev);
+	struct device *dev = cdev->dev->parent;
+	struct hid_device *hdev = to_hid_device(dev);
+	struct hid_report *report;
+
+	if (cdev->flags & LED_UNREGISTERING) {
+		/* hdev is invalid and the device will turn off LEDs anyway */
+		return LED_OFF;
+	}
+
+	report = g940_validate_leds();
+
+	if (!report) {
+		hid_err(hdev, "LED feature report invalid");
+		return LED_OFF;
+	}
+	hid_hw_request(hdev, report, HID_REQ_GET_REPORT);
+	hid_hw_wait(hdev);
+	return report->field[0]->value[led->index] ? LED_ON : LED_OFF;
+}
+
 static int lg_probe(struct hid_device *hdev, const struct hid_device_id *id)
 {
 	struct usb_interface *iface = to_usb_interface(hdev->dev.parent);
@@ -941,6 +995,52 @@ static int lg_probe(struct hid_device *hdev, const struct hid_device_id *id)
 					HID_FEATURE_REPORT, HID_REQ_SET_REPORT);
 		}
 		kfree(buf);
+	}
+
+	if (hdev->product == USB_DEVICE_ID_LOGITECH_FLIGHT_SYSTEM_G940) {
+		struct hid_report *report;
+		struct g940_led *leds;
+		unsigned int i;
+
+		report = g940_validate_leds();
+		if (!report) {
+			ret = -ENODEV;
+			goto err_free;
+		}
+		leds = devm_kcalloc(&hdev->dev, 16, sizeof(struct g940_led),
+				    GFP_KERNEL);
+		if (!leds) {
+			ret = -ENOMEM;
+			goto err_free;
+		}
+		/* P1-8 red followed by P1-8 green (set both on for amber) */
+		for (i = 0; i < 16; i++) {
+			leds[i].index = i;
+			leds[i].cdev.name =
+				devm_kasprintf(&hdev->dev, GFP_KERNEL,
+					       "g940:%s:P%u",
+					       i > 7 ? "green" : "red",
+					       (i % 8) + 1);
+			if (!leds[i].cdev.name) {
+				ret = -ENOMEM;
+				goto err_free;
+			}
+			leds[i].cdev.max_brightness = LED_ON;
+			leds[i].cdev.flags = LED_HW_PLUGGABLE;
+			leds[i].cdev.brightness_get = lg_g940_led_get;
+			leds[i].cdev.brightness_set_blocking = lg_g940_led_set;
+			devm_led_classdev_register(&hdev->dev, &leds[i].cdev);
+			/* switch greens on */
+			report->field[0]->value[i] = i > 7 ? 1 : 0;
+		}
+
+		/* With no LED I/O, the device would do a pretty startup
+		 * animation from all red to all green when plugged in.
+		 * Unfortunately the initial reads during led_classdev_register
+		 * freeze the animation at all red. We could defer such reads,
+		 * but it's a lot simpler to just set all green now.
+		 */
+		hid_hw_request(hdev, report, HID_REQ_SET_REPORT);
 	}
 
 	if (drv_data->quirks & LG_FF)
