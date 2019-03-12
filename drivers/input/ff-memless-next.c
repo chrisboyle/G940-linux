@@ -21,11 +21,13 @@
 #include <linux/fixp-arith.h>
 #include <linux/input/ff-memless-next.h>
 
+#define FRAC_N 15
+
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Michal \"MadCatX\" Maly");
 MODULE_DESCRIPTION("Force feedback support for memoryless force feedback devices");
 
-#define FF_MAX_EFFECTS 16
+#define MLNX_MAX_EFFECTS 16
 #define FF_MIN_EFFECT_LENGTH ((MSEC_PER_SEC / CONFIG_HZ) + 1)
 #define FF_EFFECT_STARTED 1
 #define FF_EFFECT_PLAYING 2
@@ -53,7 +55,7 @@ struct mlnx_device {
 	u8 rumble_playing;
 	unsigned long update_rate_jiffies;
 	void *private;
-	struct mlnx_effect effects[FF_MAX_EFFECTS];
+	struct mlnx_effect effects[MLNX_MAX_EFFECTS];
 	u16 gain;
 	struct timer_list timer;
 	struct input_dev *dev;
@@ -66,7 +68,7 @@ struct mlnx_device {
 static s32 mlnx_calculate_x_force(const s32 level,
 						  const u16 direction)
 {
-	s32 new = (level * -fixp_sin(direction)) >> FRAC_N;
+	s32 new = (level * -fixp_sin16(direction)) >> FRAC_N;
 	pr_debug("x force: %d\n", new);
 	return new;
 }
@@ -74,7 +76,7 @@ static s32 mlnx_calculate_x_force(const s32 level,
 static s32 mlnx_calculate_y_force(const s32 level,
 						  const u16 direction)
 {
-	s32 new = (level * fixp_cos(direction)) >> FRAC_N;
+	s32 new = (level * fixp_cos16(direction)) >> FRAC_N;
 	pr_debug("y force: %d\n", new);
 	return new;
 }
@@ -363,7 +365,7 @@ static s32 mlnx_calculate_periodic(struct mlnx_effect *mlnxeff, const s32 level)
 	case FF_SINE:
 	{
 		u16 degrees = (360 * t) / period;
-		new = ((level * fixp_sin(degrees)) >> FRAC_N) + offset;
+		new = ((level * fixp_sin16(degrees)) >> FRAC_N) + offset;
 		break;
 	}
 	case FF_SQUARE:
@@ -544,7 +546,7 @@ static void mlnx_schedule_playback(struct mlnx_device *mlnxdev)
 
 	/* Iterate over all effects and determine the earliest
 	 * time when we have to attend to any */
-	for (i = 0; i < FF_MAX_EFFECTS; i++) {
+	for (i = 0; i < MLNX_MAX_EFFECTS; i++) {
 		mlnxeff = &mlnxdev->effects[i];
 
 		if (!mlnx_is_started(mlnxeff))
@@ -705,7 +707,7 @@ static void mlnx_play_effects(struct mlnx_device *mlnxdev)
 	u16 strong_dir = 0;
 	u16 weak_dir = 0;
 
-	for (i = 0; i < FF_MAX_EFFECTS; i++) {
+	for (i = 0; i < MLNX_MAX_EFFECTS; i++) {
 		struct mlnx_effect *mlnxeff = &mlnxdev->effects[i];
 
 		if (!mlnx_is_started(mlnxeff)) {
@@ -833,7 +835,7 @@ static void mlnx_set_gain(struct input_dev *dev, u16 gain)
 
 	mlnxdev->gain = gain;
 
-	for (i = 0; i < FF_MAX_EFFECTS; i++) {
+	for (i = 0; i < MLNX_MAX_EFFECTS; i++) {
 		struct mlnx_effect *eff = &mlnxdev->effects[i];
 		if (eff == NULL)
 			continue;
@@ -901,14 +903,14 @@ static int mlnx_startstop(struct input_dev *dev, int effect_id, int repeat)
 	return 0;
 }
 
-static void mlnx_timer_fired(unsigned long data)
+static void mlnx_timer_fired(struct timer_list* t)
 {
-	struct input_dev *dev = (struct input_dev *)data;
+	struct mlnx_device *ml = from_timer(ml, t, timer);
 	unsigned long flags;
 
-	spin_lock_irqsave(&dev->event_lock, flags);
-	mlnx_play_effects(dev->ff->private);
-	spin_unlock_irqrestore(&dev->event_lock, flags);
+	spin_lock_irqsave(&ml->dev->event_lock, flags);
+	mlnx_play_effects(ml->dev->ff->private);
+	spin_unlock_irqrestore(&ml->dev->event_lock, flags);
 }
 
 static int mlnx_upload(struct input_dev *dev, struct ff_effect *effect,
@@ -995,7 +997,7 @@ int input_ff_create_mlnx(struct input_dev *dev, void *data,
 	mlnxdev->gain = 0xffff;
 	mlnxdev->update_rate_jiffies = msecs_to_jiffies(min_update_rate);
 	input_set_capability(dev, EV_FF, FF_GAIN);
-	setup_timer(&mlnxdev->timer, mlnx_timer_fired, (unsigned long)dev);
+	timer_setup(&mlnxdev->timer, mlnx_timer_fired, 0);
 
 	/* Set up effect emulation if needed */
 	if (test_bit(FF_PERIODIC, dev->ffbit) &&
@@ -1018,7 +1020,7 @@ int input_ff_create_mlnx(struct input_dev *dev, void *data,
 		pr_debug("No effect emulation is necessary\n");
 	}
 
-	ret = input_ff_create(dev, FF_MAX_EFFECTS);
+	ret = input_ff_create(dev, MLNX_MAX_EFFECTS);
 	if (ret) {
 		kfree(mlnxdev);
 		return ret;
