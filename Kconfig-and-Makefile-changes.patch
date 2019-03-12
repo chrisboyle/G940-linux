@@ -1,3 +1,16 @@
+diff --git a/drivers/hid/Kconfig b/drivers/hid/Kconfig
+index 6ca8d322b487..f2404f1b5d48 100644
+--- a/drivers/hid/Kconfig
++++ b/drivers/hid/Kconfig
+@@ -559,7 +559,7 @@ config LOGIRUMBLEPAD2_FF
+ config LOGIG940_FF
+ 	bool "Logitech Flight System G940 force feedback support"
+ 	depends on HID_LOGITECH
+-	select INPUT_FF_MEMLESS
++	select INPUT_FF_MEMLESS_NEXT
+ 	help
+ 	  Say Y here if you want to enable force feedback support for Logitech
+ 	  Flight System G940 devices.
 diff --git a/drivers/input/Kconfig b/drivers/input/Kconfig
 index c5992cd195a1..d94b135e9c91 100644
 --- a/drivers/input/Kconfig

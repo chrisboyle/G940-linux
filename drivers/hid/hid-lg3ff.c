@@ -24,8 +24,11 @@
 
 #include <linux/input.h>
 #include <linux/hid.h>
+#include <linux/input/ff-memless-next.h>
 
 #include "hid-lg.h"
+
+#define FF_UPDATE_RATE 50
 
 /* Ensure we remember to swap bytes (there's no sle16) */
 typedef __s16 __bitwise lg3_s16;
@@ -85,31 +88,38 @@ static void hig_lg3ff_send(struct input_dev *idev,
 }
 
 static int hid_lg3ff_play(struct input_dev *dev, void *data,
-			 struct ff_effect *effect)
+			 const struct mlnx_effect_command *command)
 {
 	struct hid_lg3ff_report report = {0};
-	s16 x, y;
 
-	switch (effect->type) {
-	case FF_CONSTANT:
-/*
- * Already clamped in ff_memless
- * 0 is center (different then other logitech)
- */
-		x = -effect->u.ramp.start_level << 8;
-		y = -effect->u.ramp.end_level << 8;
+	switch (command->cmd) {
+	case MLNX_START_COMBINED: {
+		const struct mlnx_simple_force *simple_force = &command->u.simple_force;
+		/* Scale down from MLNX range */
+		const int x = simple_force->x * 0xff / 0xffff;
+		const int y = simple_force->y * 0xff / 0xffff;
 
-/*
- * Sign backwards from other Force3d pro
- * which get recast here in two's complement 8 bits
- */
-		report.x.constant_force = lg3ff_cpu_to_sle16(x);
-		report.y.constant_force = lg3ff_cpu_to_sle16(y);
-		hig_lg3ff_send(dev, &report);
+		/*
+		 * Sign backwards from other Force3d pro
+		 * which get recast here in two's complement 8 bits
+		 */
+		report.x.constant_force = lg3ff_cpu_to_sle16(simple_force->x);
+		report.y.constant_force = lg3ff_cpu_to_sle16(simple_force->y);
 		break;
+		}
+	case MLNX_STOP_COMBINED:
+		report.x.constant_force = 0;
+		report.y.constant_force = 0;
+		break;
+	default:
+		return -EINVAL;
 	}
+
+	hig_lg3ff_send(dev, &report);
+
 	return 0;
 }
+
 static void hid_lg3ff_set_autocenter(struct input_dev *dev, u16 magnitude)
 {
 	struct hid_lg3ff_report report = {0};
@@ -127,6 +137,13 @@ static void hid_lg3ff_set_autocenter(struct input_dev *dev, u16 magnitude)
 
 static const signed short ff3_joystick_ac[] = {
 	FF_CONSTANT,
+	FF_RAMP,
+	FF_PERIODIC,
+	FF_SQUARE,
+	FF_TRIANGLE,
+	FF_SINE,
+	FF_SAW_UP,
+	FF_SAW_DOWN,
 	FF_AUTOCENTER,
 	-1
 };
@@ -149,7 +166,7 @@ int lg3ff_init(struct hid_device *hid)
 	for (i = 0; ff_bits[i] >= 0; i++)
 		set_bit(ff_bits[i], dev->ffbit);
 
-	error = input_ff_create_memless(dev, NULL, hid_lg3ff_play);
+	error = input_ff_create_mlnx(dev, NULL, hid_lg3ff_play, FF_UPDATE_RATE);
 	if (error)
 		return error;
 
