@@ -87,29 +87,78 @@ static void hig_lg3ff_send(struct input_dev *idev,
 	hid_hw_request(hid, hid_rep, HID_REQ_SET_REPORT);
 }
 
+static void hid_lg3ff_clear_cond(struct hid_lg3ff_axis *axis, u16 effect_type)
+{
+	switch (effect_type) {
+	case FF_SPRING:
+		axis->spring_deadzone_neg = 0;
+		axis->spring_deadzone_pos = 0;
+		axis->spring_coeff_neg    = 0;
+		axis->spring_coeff_pos    = 0;
+		axis->spring_saturation   = 0;
+		break;
+	case FF_DAMPER:
+		axis->damper_coeff_neg  = 0;
+		axis->damper_coeff_pos  = 0;
+		axis->damper_saturation = 0;
+		break;
+	}
+}
+
+static void hid_lg3ff_set_cond(struct hid_lg3ff_axis *axis, u16 effect_type,
+				      const struct ff_condition_effect *condition)
+{
+	switch (effect_type) {
+	case FF_SPRING:
+		axis->spring_deadzone_neg = lg3ff_cpu_to_sle16(condition->center - condition->deadband / 2);
+		axis->spring_deadzone_pos = lg3ff_cpu_to_sle16(condition->center + condition->deadband / 2);
+		axis->spring_coeff_neg    = condition->left_coeff >> 8;
+		axis->spring_coeff_pos    = condition->right_coeff >> 8;
+		axis->spring_saturation   = lg3ff_cpu_to_sle16((condition->left_saturation + condition->right_saturation) / 4);
+		break;
+	case FF_DAMPER:
+		axis->damper_coeff_neg  = condition->left_coeff >> 8;
+		axis->damper_coeff_pos  = condition->right_coeff >> 8;
+		axis->damper_saturation = lg3ff_cpu_to_sle16((condition->left_saturation + condition->right_saturation) / 4);
+		break;
+	}
+}
+
 static int hid_lg3ff_play(struct input_dev *dev, void *data,
 			 const struct mlnx_effect_command *command)
 {
-	struct hid_lg3ff_report report = {0};
+	struct hid_lg3ff_report report = {{0}};
 
 	switch (command->cmd) {
-	case MLNX_START_COMBINED: {
-		const struct mlnx_simple_force *simple_force = &command->u.simple_force;
-		/* Scale down from MLNX range */
-		const int x = simple_force->x * 0xff / 0xffff;
-		const int y = simple_force->y * 0xff / 0xffff;
-
+	case MLNX_START_COMBINED:
 		/*
 		 * Sign backwards from other Force3d pro
 		 * which get recast here in two's complement 8 bits
 		 */
-		report.x.constant_force = lg3ff_cpu_to_sle16(simple_force->x);
-		report.y.constant_force = lg3ff_cpu_to_sle16(simple_force->y);
+		report.x.constant_force = lg3ff_cpu_to_sle16(command->u.simple_force.x);
+		report.y.constant_force = lg3ff_cpu_to_sle16(command->u.simple_force.y);
 		break;
-		}
 	case MLNX_STOP_COMBINED:
 		report.x.constant_force = 0;
 		report.y.constant_force = 0;
+		break;
+	case MLNX_UPLOAD_UNCOMB:
+		switch (command->u.uncomb.effect->type) {
+			case FF_SPRING:
+			case FF_DAMPER:
+				return 0;
+			default:
+				return -EINVAL;
+		}
+	case MLNX_START_UNCOMB:
+		hid_lg3ff_set_cond(&report.x, command->u.uncomb.effect->type,
+				   &command->u.uncomb.effect->u.condition[0]);
+		hid_lg3ff_set_cond(&report.y, command->u.uncomb.effect->type,
+				   &command->u.uncomb.effect->u.condition[1]);
+		break;
+	case MLNX_STOP_UNCOMB:
+		hid_lg3ff_clear_cond(&report.x, command->u.uncomb.effect->type);
+		hid_lg3ff_clear_cond(&report.y, command->u.uncomb.effect->type);
 		break;
 	default:
 		return -EINVAL;
@@ -122,7 +171,7 @@ static int hid_lg3ff_play(struct input_dev *dev, void *data,
 
 static void hid_lg3ff_set_autocenter(struct input_dev *dev, u16 magnitude)
 {
-	struct hid_lg3ff_report report = {0};
+	struct hid_lg3ff_report report = {{0}};
 
 	/* negative means repel from center, so scale to 0-127 */
 	s8 mag_scaled = magnitude >> 9;
@@ -144,6 +193,8 @@ static const signed short ff3_joystick_ac[] = {
 	FF_SINE,
 	FF_SAW_UP,
 	FF_SAW_DOWN,
+	FF_SPRING,
+	FF_DAMPER,
 	FF_AUTOCENTER,
 	-1
 };
